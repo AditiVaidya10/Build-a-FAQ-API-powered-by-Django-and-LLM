@@ -1,0 +1,163 @@
+Task :- Build a FAQ API Powered by Django and a Large Language Model (LLM)
+
+Step by step solution for the given task :- 
+
+- Project Setup
+
+1. Install Django and Django REST FRAMEWORK (DRF) : 
+   -- pip install django djangorestframework
+2. Create Django Project and App :
+   -- django-admin startproject faq_project
+      cd faq_project
+      django-admin startapp faq_project
+3. Configure Installed Apps : 
+   Add faq and rest_framework to INSTALLED_APPS in faq_project/settings.py
+4. Set up the database :
+   Default - SQLite. You can modify the settings in the faq_project/settings.py
+5. Migrate the Database :
+   -- python manage.py migrate
+
+- Model Creation 
+
+1. Define the FAQ model in faq/models.py:
+   -- from django.db import models
+      class FAQ(models.Model):
+         question = models.TextField()
+         answer = models.TextField()
+         keywords = models.JSONField(null=True, blank=True)
+         created_at = models.DataTimeField(auto_now_add=True)
+
+         def __str__(self):
+             return self.question
+2. Run migrations to apply the model :
+   -- python manage.py makemigrations faq
+      python manage.py migrate
+
+- Admin Panel
+
+Register the model in faq/admin.py :
+-- from django.contrib import admin
+   from .models import FAQ
+   admin.site.register(FAQ)
+
+Run the development server and create an admin user:
+-- python manage.py createsuperuser
+   python manage.py runserver
+
+Visit /admin to manage FAQs
+
+- Create Serializers
+
+In faq/serializers.py 
+-- from rest_framework import serializers
+   from .models import FAQ
+   class FAQSerializers(serializers.ModelSerializer):
+      class Meta:
+         model = FAQ
+         fields = ['id', 'question','answer','keywords']
+
+- Create Views 
+
+In faq/views.py :
+-- from rest_framework.views import APIView
+   from rest_framework.response import response
+   from rest_framework import status
+   from .models import FAQ
+   from .serializers import FAQSerializers
+   from django.core.cache import cache
+   import openai
+   import os
+
+# LOAD OPENAI API KEY FROM ENVIRONMENT VARIABLES #
+
+   openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# ENDPOINT TO LIST ALL FAQ'S #
+
+   class FAQListView(APIView):
+      def get(self, request):
+          faqs = FAQ.objects.all()
+          serializer = FAQSerializer(faqs, many = True)
+          return Response(serializer.data)
+
+# ENDPOINT TO HANDLE QUERIES #
+
+   class QueryView(APIView):
+      def post(self, request):
+          query = request.data.get("query")
+          if not query:
+             return Response({"error": "Query is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+# CHECK CACHE FOR A PREVIOUS RESPONSE #
+
+         cached_response = cache.get(query)
+         if cached_response:
+            return Response({"answer" : cached_response})
+
+# FIND A MATCHING FAQ #
+
+         faqs = FAQ.objects.all()
+         for faq in faqs:
+             if query.lower() in faq.question.lower():
+                cache.set(query, faq.answer, timeout=3600) # FOR ONE HOUR #
+
+# IF NO MATCH, USE LLM #
+         try:
+            response = openai.Completion.create(
+               model="text-davinci-003",
+               prompt-f"Question: {query}\nGive the correct answer.",
+               max_tokens=100,
+               temperature=0.7,
+            )
+            answer = response['choices'][0]['text'].strip()
+            cache.set(query,answer, timeout=3600) # CACHE THE LLM RESPONSE #
+            return Response({"answer": answer})
+         except Exception as e:
+             return Response({"error": "The system is temporarily unavaiable. Please try again later"},
+                              status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+- URL Configuration
+
+In faq/urls.py:
+-- from django.urls import path
+   from .views import FAQListView, QueryView
+   urlpatterns = [
+      path('api/faqs/', FAQListView.as_view(), name='faq-list'),
+      path('api/query/', QueryView.as_view(), name='query'),
+   ]
+
+In faq_project/urls.py:
+-- from django.contrib import admin
+   from django.urls import path, include
+
+   urlpatterns = [
+      path('admin/',admin.site.urls),
+      path('', include('faq.urls')),
+   ]
+
+- Environment Variables 
+
+Create a .env file :
+-- OPENAI_API_KEY = ( your openai api key )
+
+Load the .env file in faq_project/settings.py :
+-- from dotenv import load_dotenv
+   import os
+
+   load_dotenv()
+
+Install python-dotenv if necessary:
+-- pip install python-dotenv 
+
+- Caching 
+
+Enable caching in faq_project/settings.py:
+-- CACHES = {
+      'default':{
+         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+      }
+}
+
+- Testing
+
+Use Postman or CURL commands to test the endpoints
